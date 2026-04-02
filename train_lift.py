@@ -10,12 +10,15 @@ from datetime import datetime
 from pathlib import Path
 
 import torch
+import wandb
 import yaml
 from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from wandb.integration.sb3 import WandbCallback
 
 from src.callbacks.plot_callback import PlotLearningCurveCallback
+from src.callbacks.wandb_video_callback import WandbVideoCallback
 from src.envs.lift_cube import LiftCubeCartesianEnv
 
 
@@ -52,6 +55,9 @@ def main():
                         help="Path to pretrained model .zip file (transfer learning)")
     parser.add_argument("--timesteps", type=int, default=None,
                         help="Override timesteps from config (useful for resuming)")
+    parser.add_argument("--wandb-name", type=str, default=None,
+                        help="W&B run name (default: <exp_name>_<timestamp>)")
+    parser.add_argument("--no-wandb", action="store_true", help="Disable W&B logging")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -80,6 +86,19 @@ def main():
 
     # Copy config to output directory
     shutil.copy(args.config, output_dir / "config.yaml")
+
+    # Initialize W&B
+    use_wandb = not args.no_wandb
+    if use_wandb:
+        run_name = args.wandb_name or f"{exp_cfg['name']}_{timestamp}"
+        wandb.init(
+            project=exp_cfg.get("wandb_project", "pick-101"),
+            name=run_name,
+            config=config,
+            sync_tensorboard=True,
+            monitor_gym=True,
+            save_code=True,
+        )
 
     # If resuming, document what we're resuming from
     if args.resume:
@@ -215,6 +234,20 @@ def main():
         resume_step=resume_step,
     )
 
+    callbacks = [checkpoint_callback, eval_callback, plot_callback]
+    if use_wandb:
+        callbacks.append(WandbCallback(
+            gradient_save_freq=train_cfg.get("save_freq", 100000),
+            verbose=2,
+        ))
+        callbacks.append(WandbVideoCallback(
+            env_cfg=env_cfg,
+            vec_normalize=env,
+            log_freq=train_cfg.get("video_log_freq", 50_000),
+            camera=train_cfg.get("video_camera", "closeup"),
+            verbose=1,
+        ))
+
     # Use CLI timesteps if provided, otherwise use config
     timesteps = args.timesteps if args.timesteps is not None else train_cfg["timesteps"]
 
@@ -242,13 +275,16 @@ def main():
 
     model.learn(
         total_timesteps=learn_timesteps,
-        callback=[checkpoint_callback, eval_callback, plot_callback],
+        callback=callbacks,
         progress_bar=True,
         reset_num_timesteps=reset_num_timesteps,
     )
 
     model.save(output_dir / "final_model")
     env.save(output_dir / "vec_normalize.pkl")
+
+    if use_wandb:
+        wandb.finish()
 
     print(f"\nTraining complete! Model saved to {output_dir}")
 

@@ -86,7 +86,7 @@ PYTHONPATH=. uv run python tests/test_topdown_pick.py --viewer
 Train an RL agent using low-dimensional state observations (joint positions, cube pose, etc.):
 
 ```bash
-PYTHONPATH=. uv run python train_lift.py --config configs/curriculum_stage3.yaml
+PYTHONPATH=. uv run python train_lift.py --config configs/state_based/curriculum_stage3.yaml
 ```
 
 Uses v11 reward. Achieves 100% success rate at 1M steps.
@@ -101,6 +101,40 @@ Training outputs are saved to `runs/lift_curriculum_s3/<timestamp>/`:
 - `checkpoints/` - Model checkpoints every 100k steps
 - `vec_normalize.pkl` - Observation normalization stats
 - `tensorboard/` - Training logs
+
+### W&B Logging
+
+Training metrics and episode videos are logged to [Weights & Biases](https://wandb.ai) automatically. Log in before training:
+
+```bash
+uv run wandb login
+```
+
+Then train with an optional custom run name:
+
+```bash
+PYTHONPATH=. uv run python train_lift.py \
+  --config configs/state_based/curriculum_stage3.yaml \
+  --wandb-name my-run-v1
+```
+
+To disable W&B logging:
+
+```bash
+PYTHONPATH=. uv run python train_lift.py \
+  --config configs/state_based/curriculum_stage3.yaml \
+  --no-wandb
+```
+
+Episode videos are recorded every `video_log_freq` steps (default 50k) and uploaded to W&B under `rollout/video`. The camera and frequency can be configured in the yaml:
+
+```yaml
+training:
+  video_log_freq: 50000   # steps between video logs
+  video_camera: "closeup" # or "wide" / "wide2"
+```
+
+The W&B project defaults to `pick-101`. Override with `wandb_project` in the `experiment` config section.
 
 ### Evaluation
 
@@ -120,7 +154,7 @@ To continue training from a checkpoint:
 
 ```bash
 PYTHONPATH=. uv run python train_lift.py \
-  --config configs/curriculum_stage3.yaml \
+  --config configs/state_based/curriculum_stage3.yaml \
   --resume runs/lift_curriculum_s3/<timestamp> \
   --timesteps 500000  # Additional steps
 ```
