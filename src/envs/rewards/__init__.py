@@ -8,7 +8,7 @@ Legacy rewards (for checkpoint compatibility only):
 - v1-v10, v12-v18: Historical experiments
 """
 
-from .lift_rewards import reward_v11, reward_v19
+from .lift_rewards import reward_v11, reward_v19, reward_v20
 from ._legacy_rewards import (
     reward_v1,
     reward_v2,
@@ -54,6 +54,8 @@ REWARD_FUNCTIONS = {
     "v18": reward_v18,
     # Working (image-based)
     "v19": reward_v19,
+    # Pick-and-place
+    "v20": reward_v20,
 }
 
-__all__ = ["REWARD_FUNCTIONS", "reward_v11", "reward_v19"]
+__all__ = ["REWARD_FUNCTIONS", "reward_v11", "reward_v19", "reward_v20"]

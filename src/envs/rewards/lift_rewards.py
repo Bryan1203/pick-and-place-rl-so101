@@ -156,3 +156,65 @@ def reward_v19(env, info: dict, was_grasping: bool = False, action: np.ndarray |
         reward += 10.0
 
     return reward
+
+
+def reward_v20(env, info: dict, was_grasping: bool = False, action: np.ndarray | None = None) -> float:
+    """V20: Dense reward for pick-and-place to a container.
+
+    Structure:
+    - Phase 1 Reach: tanh gripper-to-cube distance reward
+    - Push-down penalty
+    - Drop penalty (disabled when cube is over target — releasing is the goal)
+    - Phase 2 Grasp + Lift: grasp bonus + lift progress to clear container rim
+    - Rim clearance bonus
+    - Phase 3 Transport: tanh cube-to-target reward (gated on being lifted)
+    - Phase 4 Place: bonus for releasing cube in target zone
+    - Success bonus
+    """
+    reward = 0.0
+    cube_z = info["cube_z"]
+    gripper_to_cube = info["gripper_to_cube"]
+    is_grasping = info["is_grasping"]
+    cube_to_target = info.get("cube_to_target", None)
+
+    # === Phase 1: Reach ===
+    reach_reward = 1.0 - np.tanh(10.0 * gripper_to_cube)
+    reward += reach_reward
+
+    # Push-down penalty
+    if cube_z < 0.01:
+        reward -= (0.01 - cube_z) * 50.0
+
+    # Drop penalty — suppressed when cube is already over target (releasing is desired)
+    over_target = cube_to_target is not None and cube_to_target < 0.05
+    if was_grasping and not is_grasping and not over_target:
+        reward -= 2.0
+
+    # === Phase 2: Grasp + Lift ===
+    clear_height = 0.04  # must clear 3cm container walls with margin
+    if is_grasping:
+        reward += 0.25
+
+        lift_progress = np.clip((cube_z - 0.015) / (clear_height - 0.015), 0.0, 1.0)
+        reward += lift_progress * 2.0
+
+    # Rim clearance bonus
+    if cube_z > clear_height:
+        reward += 1.0
+
+    # === Phase 3: Transport ===
+    # Only reward horizontal progress once cube clears the container rim
+    if cube_z > clear_height and cube_to_target is not None:
+        transport_reward = 1.0 - np.tanh(10.0 * cube_to_target)
+        reward += transport_reward * 2.0
+
+    # === Phase 4: Place ===
+    # Reward releasing cube in the target zone
+    if over_target and not is_grasping and cube_z < 0.05:
+        reward += 2.0
+
+    # Success bonus
+    if info["is_success"]:
+        reward += 10.0
+
+    return reward

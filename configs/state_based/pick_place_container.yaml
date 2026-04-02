@@ -1,0 +1,37 @@
+# Pick-and-Place to Container
+# Agent must pick up the cube and place it inside the green container at (0.25, 0.15)
+experiment:
+  name: "pick_place_container"
+  base_dir: "runs"
+  wandb_project: "pick-101"
+
+training:
+  timesteps: 2000000
+  eval_freq: 10000
+  save_freq: 100000
+  seed: 42
+  video_log_freq: 10000
+  video_camera: "wide"
+
+sac:
+  learning_rate: 3.0e-4
+  buffer_size: 200000
+  learning_starts: 1000
+  batch_size: 256
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 1
+
+env:
+  normalize_obs: true
+  normalize_reward: true
+  max_episode_steps: 400      # longer — pick + transport + place
+  action_scale: 0.02
+  lift_height: 0.08
+  hold_steps: 10
+  reward_type: "dense"
+  reward_version: "v20"
+  curriculum_stage: 3         # start with gripper near cube
+  lock_wrist: false           # agent needs wrist freedom to place
+  place_target: [0.25, 0.15]  # matches container position in lift_cube.xml

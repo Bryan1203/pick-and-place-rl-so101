@@ -10,7 +10,7 @@ training:
   save_freq: 100000
   seed: 42
   # pretrained: "runs/lift_curriculum_s1/20251229_224741/checkpoints/sac_lift_500000_steps.zip"
-  video_log_freq: 5000   # steps between video logs
+  video_log_freq: 50000   # steps between video logs
   video_camera: "wide" # or "wide" / "wide2"
 
 
@@ -32,7 +32,7 @@ env:
   lift_height: 0.08         # 8cm above ground
   hold_steps: 150           # Must hold for 150 steps (~3 seconds at 50Hz)
   reward_type: "dense"
-  reward_version: "v11"
+  reward_version: "v20"
   curriculum_stage: 3       # Gripper near cube, open
   lock_wrist: true          # Lock wrist for stable top-down grasping
 
