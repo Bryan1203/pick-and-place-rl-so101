@@ -1,0 +1,107 @@
+# Sim-to-Real World Model + MBPO config for the lift task.
+#
+# Pipeline
+# --------
+#  Phase 1  Collect sim trajectories from MuJoCo (random policy, cheap & abundant).
+#  Phase 2  Load real-world trajectories from file (offline, expensive & scarce).
+#  Phase 3  Fit observation normalizer on combined sim + real corpus.
+#  Phase 4  Pre-train ensemble world model on sim data → until val loss converges.
+#  Phase 5  Fine-tune world model on real data (lower lr) → until val loss converges.
+#  Phase 6  RL training: online SAC in MuJoCo sim, augmented by world-model rollouts.
+
+experiment:
+  name: "lift_mbpo_real"
+  base_dir: "runs"
+  wandb_project: "pick-101"
+
+# ── Real-world data ──────────────────────────────────────────────────────────
+real_data:
+  # Path to pre-collected real robot trajectories.
+  # Supported: .npz (np.savez) or .h5 / .hdf5 (HDF5)
+  # Required keys: observations, next_observations, actions, rewards, dones
+  #   observations      : (N, obs_dim)  float32
+  #   next_observations : (N, obs_dim)  float32
+  #   actions           : (N, act_dim)  float32
+  #   rewards           : (N,)          float32
+  #   dones             : (N,)          bool
+  path: "data/real_trajectories.npz"
+  max_transitions: 10000      # Cap on how many real transitions to load (None = all)
+
+# ── MuJoCo simulation data collection ───────────────────────────────────────
+sim_collection:
+  n_steps: 100000             # Steps to collect before any training begins
+  buffer_size: 300000         # Max sim transitions kept in the replay buffer
+  use_random_policy: true     # true = uniform random; false = current SAC policy
+
+# ── World model architecture ─────────────────────────────────────────────────
+# (shared between pre-train and fine-tune phases)
+mbpo:
+  ensemble_size: 5            # Number of independent ensemble members
+  model_hidden_size: 200      # Hidden units per layer
+  model_hidden_layers: 4      # Number of hidden layers
+  max_log_var:  0.5           # Upper bound on predictive log-variance
+  min_log_var: -10.0          # Lower bound on predictive log-variance
+
+  # ── RL-phase rollout generation ────────────────────────────────────────────
+  model_gen_freq: 250         # Generate rollouts every N online sim steps
+  rollouts_per_step: 400      # Parallel rollouts per generation round
+  # Rollout horizon grows linearly: [start_step, end_step, len_start, len_end]
+  rollout_schedule:
+    - [0,       100000,  1,  5]   # Keep short while world model warms up
+    - [100000,  300000,  5, 15]   # Gradually extend horizon
+
+  model_buffer_size: 400000   # Synthetic replay buffer capacity
+
+  # ── SAC batch mixing ───────────────────────────────────────────────────────
+  # real_ratio + sim_ratio must be < 1.0; remainder = model rollouts.
+  real_ratio: 0.05            # 5%  — real data (precious, accurate)
+  sim_ratio:  0.20            # 20% — MuJoCo sim data (diverse, slightly biased)
+  # 75% of each SAC batch comes from the fine-tuned world model
+
+  gradient_steps: 20          # SAC gradient steps per online sim step
+
+# ── World model pre-training (Phase 4) — sim data ────────────────────────────
+world_model_pretrain:
+  n_epochs:   500             # Maximum number of training epochs
+  batch_size: 256
+  val_ratio:  0.1             # Fraction of sim data held out for early stopping
+  patience:   30              # Epochs without val-loss improvement → stop
+  lr:         1.0e-3          # Adam learning rate
+
+# ── World model fine-tuning (Phase 5) — real data ────────────────────────────
+world_model_finetune:
+  n_epochs:   200
+  batch_size: 64              # Smaller: real data is scarce
+  val_ratio:  0.2             # Hold out more for validation (real data is precious)
+  patience:   20
+  lr:         1.0e-4          # 10x smaller than pre-train lr (conservative update)
+
+# ── SAC hyperparameters ───────────────────────────────────────────────────────
+sac:
+  learning_rate: 3.0e-4
+  buffer_size:   1000         # Placeholder only — we manage our own buffers
+  batch_size:    256
+  tau:           0.005
+  gamma:         0.99
+
+# ── RL training schedule ─────────────────────────────────────────────────────
+training:
+  timesteps:      300000      # Online MuJoCo steps in Phase 6
+  seed:           42
+  save_freq:      50000
+  eval_freq:      10000
+  video_log_freq: 50000
+  video_camera:   "closeup"
+
+# ── Environment ───────────────────────────────────────────────────────────────
+env:
+  normalize_obs:     true
+  normalize_reward:  true
+  max_episode_steps: 200
+  action_scale:      0.02     # 2 cm per Cartesian delta step
+  lift_height:       0.08     # 8 cm target lift height
+  hold_steps:        10
+  reward_type:       "dense"
+  reward_version:    "v7"
+  curriculum_stage:  0
+  lock_wrist:        false
