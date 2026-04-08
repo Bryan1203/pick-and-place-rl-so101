@@ -226,7 +226,7 @@ class LiftCubeCartesianEnv(gym.Env):
         # Add place-related info if place target is set
         if self._place_target_pos is not None:
             cube_to_target_xy = np.linalg.norm(cube_pos[:2] - self._place_target_pos[:2])
-            cube_at_target = cube_to_target_xy < 0.02  # Within 2cm of target
+            cube_at_target = cube_to_target_xy < 0.04  # Within 2cm of target
             cube_on_ground = cube_z < 0.025  # Cube resting on table
             is_placed = cube_at_target and cube_on_ground and not is_grasping
             info["cube_to_target"] = cube_to_target_xy

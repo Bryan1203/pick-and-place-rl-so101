@@ -28,10 +28,10 @@ env:
   normalize_reward: true
   max_episode_steps: 400      # longer — pick + transport + place
   action_scale: 0.02
-  lift_height: 0.08
-  hold_steps: 10
+  lift_height: 0.05          # clear container walls (3cm tall + 1cm margin)
+  # hold_steps: 10
   reward_type: "dense"
-  reward_version: "v20"
+  reward_version: "v21"
   curriculum_stage: 3         # start with gripper near cube
-  lock_wrist: false           # agent needs wrist freedom to place
+  # lock_wrist: true            # stabilizes top-down grasping (wrist handled by IK when place_target is set)
   place_target: [0.25, 0.15]  # matches container position in lift_cube.xml

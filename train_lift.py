@@ -18,6 +18,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from wandb.integration.sb3 import WandbCallback
 
 from src.callbacks.plot_callback import PlotLearningCurveCallback
+from src.callbacks.reward_component_callback import RewardComponentCallback
 from src.callbacks.wandb_video_callback import WandbVideoCallback
 from src.envs.lift_cube import LiftCubeCartesianEnv
 
@@ -234,7 +235,13 @@ def main():
         resume_step=resume_step,
     )
 
-    callbacks = [checkpoint_callback, eval_callback, plot_callback]
+    # Reward component logging (works with v20+ reward functions)
+    reward_component_callback = RewardComponentCallback(
+        log_freq=train_cfg.get("eval_freq", 10000),
+        verbose=1,
+    )
+
+    callbacks = [checkpoint_callback, eval_callback, plot_callback, reward_component_callback]
     if use_wandb:
         callbacks.append(WandbCallback(
             gradient_save_freq=train_cfg.get("save_freq", 100000),
