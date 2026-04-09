@@ -94,9 +94,14 @@ class PickCubeEnv(gym.Env):
         )
 
         # Target position: inside bowl (bowl is at y=0.10, target z=0.04 above ground)
-        self.target_pos = np.array([0.40, 0.10, 0.04])
+        self.target_pos = np.array([0.40, 0.10, 0.059]) # z= 0.044 (box bottom's top surface) + 0.015 (half cube size + small margin)
+
+        # YK's additions for reward shaping 
         self.prev_gripper_to_cube = None 
         self.prev_cube_to_target = None
+        self.prev_grasping_steps = 0
+        self.prev_action = None
+
         # Renderer
         self._renderer = None
         if render_mode == "human":
@@ -241,7 +246,7 @@ class PickCubeEnv(gym.Env):
         info = self._get_info()
 
         # Calculate reward
-        reward = self._YK_compute_reward_v1(info)
+        reward = self._YK_compute_reward_v1(info,action)
 
         # Check termination
         terminated = info["is_success"]
@@ -295,7 +300,7 @@ class PickCubeEnv(gym.Env):
         #     reward -= self.drop_penalty
 
         return reward
-    def _YK_compute_reward_v1(self, info: dict[str, Any]) -> float:
+    def _YK_compute_reward_v1(self, info: dict[str, Any], action: np.ndarray=None) -> float:
         """Compute staged reward based on current state.
 
         Stages:
@@ -309,6 +314,7 @@ class PickCubeEnv(gym.Env):
         cube_to_target = info["cube_to_target"]
         cube_z = info["cube_pos"][2]
         # print(f"{gripper_to_cube=}, Cube to target: {cube_to_target}")
+        xy_dist_to_target = np.linalg.norm(info["cube_pos"][:2] - self.target_pos[:2])
 
         is_grasping = info["is_grasping"]
         is_lifted = info["is_lifted"]
@@ -327,23 +333,37 @@ class PickCubeEnv(gym.Env):
 
         # Stage 2: Grasp bonus - reward for closing gripper around cube
         if is_grasping:
-            reward += self.grasp_bonus
+            reward += self.grasp_bonus * ((1 + self.prev_grasping_steps)/(2 + self.prev_grasping_steps))  # Bonus increases the longer you grasp
+            self.prev_grasping_steps += 1
+        else:
+            self.prev_grasping_steps = 0
 
         # Stage 3: Lift bonus - reward for lifting cube off ground
         if is_lifted:
-            lift_reward = self.lift_bonus + cube_z * self.lift_height_scale
+            
+            lift_progress = min(max(0, cube_z - 0.06),0.2) # height = [2*box's height, 20cm], linearly scaled to [0,1]
+            lift_reward = self.lift_bonus + lift_progress * self.lift_height_scale
             reward += lift_reward
-
-            # Stage 4: Place - only encourage moving to target when lifted
-            if self.prev_cube_to_target is not None:
-                place_reward = self.place_weight * (self.prev_cube_to_target - cube_to_target)
-            else:
-                place_reward = -self.place_weight * cube_to_target
-            reward += place_reward
+            if xy_dist_to_target < 0.05:
+                # Stage 4: Place - only encourage moving to target when lifted
+                if self.prev_cube_to_target is not None:
+                    place_reward = self.place_weight * (self.prev_cube_to_target - cube_to_target)
+                else:
+                    place_reward = -self.place_weight * cube_to_target
+                reward += place_reward
 
         # Stage 5: Success bonus
         if info["is_success"]:
             reward += self.success_bonus
+        
+        ## smooth action penalty to encourage more stable policies (YK's addition)
+        if self.prev_action is not None:  # Only apply penalty after first step
+            action_penalty = 0.01 * np.sum(action**2)
+            smoothness_penalty = 0.005 * np.sum((action - self.prev_action)**2)
+            reward -= action_penalty + smoothness_penalty
+        if action is not None:
+            self.prev_action = action.copy()
+
 
         # Penalty if cube falls off table
         # if cube_z < 0.0:
