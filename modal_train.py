@@ -1,25 +1,37 @@
-"""Run SAC training on Modal with GPU.
+"""Run pick-cube SAC training on Modal with GPU.
+
+Calls train_v2.py (PickCubeEnv, 6-dim joint-space actions, W&B + full callbacks).
 
 Usage:
-    # Run with default config (pick_place_container v21)
+    # Run with default config
     uv run modal run modal_train.py
 
-    # Run with custom config
-    uv run modal run modal_train.py --config configs/state_based/pick_place_container.yaml
+    # Override timesteps
+    uv run modal run modal_train.py --timesteps 3000000
 
-    # Run with extra args
-    uv run modal run modal_train.py --timesteps 1000000
-
-    # Run detached (keeps running even if you close terminal)
+    # Run detached (keeps running after you close terminal)
     uv run modal run --detach modal_train.py
+
+    # Disable W&B (useful for quick tests)
+    uv run modal run modal_train.py --no-wandb
+
+    # Set a custom W&B run name
+    uv run modal run modal_train.py --wandb-name pick_cube
+
+    # Resume from a previous run
+    uv run modal run --detach modal_train.py --resume runs/pick_cube/20260408_120000
+
+    # Transfer learning from a pretrained checkpoint
+    uv run modal run --detach modal_train.py --pretrained runs/pick_cube/<ts>/final_model.zip
 """
 
 from pathlib import Path
+from collections import deque
 
 import modal
 
 # ---------------------------------------------------------------------------
-# Modal image: CUDA 12.8, Python 3.12, all deps + repo source
+# Modal image: CUDA 12.8, Python 3.10, all deps + repo source
 # ---------------------------------------------------------------------------
 repo_root = Path(__file__).parent
 
@@ -62,7 +74,7 @@ image = (
         "diffusers==0.29.0",
         "hydra-joblib-launcher",
     )
-    # Bake the repo into the image (replaces modal.Mount)
+    # Bake the repo into the image
     .add_local_dir(
         repo_root,
         remote_path="/repo",
@@ -77,20 +89,20 @@ image = (
     .env({"MUJOCO_GL": "osmesa", "PYTHONPATH": "/repo"})
 )
 
-app = modal.App("pick-101-train", image=image)
+app = modal.App("pick-101-pick-cube", image=image)
 
 # Persistent volume for checkpoints and runs (survives across invocations)
 vol = modal.Volume.from_name("pick-101-runs", create_if_missing=True)
 
 
 @app.function(
-    gpu="L4",                    # Fast and cheap ($0.80/hr), plenty for state-based SAC
-    timeout=6 * 3600,            # 6 hour max
+    gpu="A100",                  # Sufficient for state-based SAC; more VRAM than A1
+    timeout=20 * 3600,           # 20 hour max for long pick-place runs
     volumes={"/runs": vol},
     secrets=[modal.Secret.from_name("wandb-secret")],  # WANDB_API_KEY
 )
 def train(
-    config: str = "configs/state_based/pick_place_container.yaml",
+    config: str = "configs/pick_cube.yaml",
     extra_args: list[str] | None = None,
 ):
     import os
@@ -99,9 +111,8 @@ def train(
 
     os.chdir("/repo")
 
-    # Build command
     cmd = [
-        "python", "train_lift.py",
+        "python", "train_v2.py",
         "--config", config,
     ]
     if extra_args:
@@ -117,8 +128,11 @@ def train(
         bufsize=1,
     )
 
+    recent_output = deque(maxlen=200)
+
     # Stream output live
     for line in proc.stdout:
+        recent_output.append(line.rstrip("\n"))
         print(line, end="")
 
     proc.wait()
@@ -137,25 +151,39 @@ def train(
         print(f"\nRuns synced to modal volume 'pick-101-runs'")
 
     if proc.returncode != 0:
-        raise RuntimeError(f"Training failed with exit code {proc.returncode}")
+        tail = "\n".join(recent_output).strip()
+        message = f"Training failed with exit code {proc.returncode}"
+        if tail:
+            message += f"\nLast output lines:\n{tail}"
+        raise RuntimeError(message)
 
     print("\nTraining complete!")
 
 
 # ---------------------------------------------------------------------------
 # Entry point: `uv run modal run modal_train.py`
+# This relies on the project-managed `modal` dependency, not a global install.
 # ---------------------------------------------------------------------------
 @app.local_entrypoint()
 def main(
-    config: str = "configs/state_based/pick_place_container.yaml",
+    config: str = "configs/pick_cube.yaml",
     timesteps: int = 0,
     no_wandb: bool = False,
+    wandb_name: str = "",
+    resume: str = "",
+    pretrained: str = "",
 ):
     extra_args = []
     if timesteps > 0:
         extra_args.extend(["--timesteps", str(timesteps)])
     if no_wandb:
         extra_args.append("--no-wandb")
+    if wandb_name:
+        extra_args.extend(["--wandb-name", wandb_name])
+    if resume:
+        extra_args.extend(["--resume", resume])
+    if pretrained:
+        extra_args.extend(["--pretrained", pretrained])
 
     train.remote(
         config=config,
