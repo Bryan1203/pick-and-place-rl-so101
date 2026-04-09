@@ -1,0 +1,35 @@
+# MLP baseline — no observation history, standard SAC + MlpPolicy
+# Use this as the comparison baseline against lstm/transformer.
+experiment:
+  name: "sequence_compare"
+  base_dir: "runs"
+
+training:
+  timesteps: 500000
+  eval_freq: 10000
+  save_freq: 50000
+  seed: 42
+
+sac:
+  learning_rate: 3.0e-4
+  buffer_size: 100000
+  learning_starts: 1000
+  batch_size: 256
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 1
+
+env:
+  normalize_obs: true
+  normalize_reward: true
+  max_episode_steps: 200
+  action_scale: 0.02
+  lift_height: 0.08
+  hold_steps: 10
+  reward_type: "dense"
+
+model:
+  # MLP has no history — this section is here for consistency only
+  history_len: 1       # ignored for mlp
+  net_arch: [256, 256]

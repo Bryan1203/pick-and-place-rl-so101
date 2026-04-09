@@ -1,0 +1,39 @@
+# Transformer policy — observation history processed by a small encoder.
+# Attention allows the policy to focus on relevant past timesteps.
+experiment:
+  name: "sequence_compare"
+  base_dir: "runs"
+
+training:
+  timesteps: 500000
+  eval_freq: 10000
+  save_freq: 50000
+  seed: 42
+
+sac:
+  learning_rate: 3.0e-4
+  buffer_size: 100000
+  learning_starts: 1000
+  batch_size: 256
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 1
+
+env:
+  normalize_obs: true
+  normalize_reward: true
+  max_episode_steps: 200
+  action_scale: 0.02
+  lift_height: 0.08
+  hold_steps: 10
+  reward_type: "dense"
+
+model:
+  history_len: 16      # sequence length fed to transformer
+  d_model: 64          # transformer model dimension
+  nhead: 4             # attention heads (must divide d_model)
+  num_layers: 2        # encoder blocks
+  dim_feedforward: 256 # FFN hidden size inside each block
+  dropout: 0.0         # no dropout for RL (small batches)
+  net_arch: [256, 256] # MLP layers after transformer output
