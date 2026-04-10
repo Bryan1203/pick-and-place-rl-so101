@@ -368,6 +368,10 @@ class PickCubeEnv(gym.Env):
         mujoco.mj_forward(self.model, self.data)
 
         self._step_count = 0
+        self.prev_gripper_to_cube = None
+        self.prev_cube_to_target = None
+        self.prev_grasping_steps = 0
+        self.prev_action = None
 
         return self._get_obs(), self._get_info()
 
@@ -399,7 +403,7 @@ class PickCubeEnv(gym.Env):
         info = self._get_info()
 
         # Calculate reward
-        reward = self._YK_compute_reward_v0(info,action)
+        reward = self._YK_compute_reward_v2(info,action)
 
         # Check termination
         terminated = info["is_success"]
@@ -568,6 +572,191 @@ class PickCubeEnv(gym.Env):
         #     reward -= self.drop_penalty
         self.prev_gripper_to_cube = gripper_to_cube
         self.prev_cube_to_target = cube_to_target
+        return reward
+
+    @staticmethod
+    def tolerance(
+        x: float,
+        bounds: tuple[float, float] = (0.0, 0.0),
+        margin: float = 0.0,
+        value_at_margin: float = 0.1,
+    ) -> float:
+        """Meta-World-style long-tail tolerance returning a smooth [0, 1] score."""
+        lower, upper = bounds
+        if lower <= x <= upper:
+            return 1.0
+        if margin == 0.0:
+            return 0.0
+        d = (lower - x if x < lower else x - upper) / margin
+        scale = np.sqrt(1.0 / value_at_margin - 1.0)
+        return 1.0 / ((d * scale) ** 2 + 1.0)
+
+    @staticmethod
+    def hamacher(a: float, b: float) -> float:
+        """Hamacher product: smooth AND for two [0, 1] values."""
+        a = float(np.clip(a, 0.0, 1.0))
+        b = float(np.clip(b, 0.0, 1.0))
+        denom = a + b - a * b
+        return (a * b / denom) if denom > 1e-8 else 0.0
+
+    @staticmethod
+    def soft_or(a: float, b: float) -> float:
+        """Probabilistic OR for two [0, 1] values."""
+        a = float(np.clip(a, 0.0, 1.0))
+        b = float(np.clip(b, 0.0, 1.0))
+        return a + b - a * b
+
+    def _YK_compute_reward_v2(self, info: dict[str, Any], action: np.ndarray=None) -> float:
+        """Smooth staged reward using Meta-World-style tolerance and Hamacher terms.
+
+        Stages:
+        1. Approach cube
+        2. Grasp cube
+        3. Lift cube
+        4. Move lifted cube close to target
+        5. Place cube softly at target
+
+        Each stage contributes a smooth value in [0, upper], and each later
+        stage accumulates earlier stage contributions near their upper bounds.
+        """
+        gripper_to_cube = info["gripper_to_cube"]
+        cube_to_target = info["cube_to_target"]
+        cube_pos = info["cube_pos"]
+        cube_z = cube_pos[2]
+        gripper_state = info["gripper_state"]
+
+        cube_half_size = 0.015
+        table_cube_z = cube_half_size
+        target_z = self.target_pos[2]
+
+        # Increasing per-stage upper bounds. Total stage ceilings are therefore
+        # 1, 3, 6, 10, and 15 as the task advances.
+        approach_upper = 1.0
+        grasp_upper = 2.0
+        lift_upper = 3.0
+        move_upper = 4.0
+        place_upper = 5.0
+
+        approach_progress = self.tolerance(
+            gripper_to_cube,
+            bounds=(0.0, self.grasp_distance_threshold),
+            margin=0.22,
+            value_at_margin=0.1,
+        )
+
+        close_progress = self.tolerance(
+            gripper_to_cube,
+            bounds=(0.0, self.grasp_distance_threshold),
+            margin=0.08,
+            value_at_margin=0.1,
+        )
+        closed_progress = self.tolerance(
+            gripper_state,
+            bounds=(-np.inf, self.gripper_closed_threshold),
+            margin=0.12,
+            value_at_margin=0.1,
+        )
+        contact_progress = np.mean(
+            [
+                float(info["has_static_finger_contact"]),
+                float(info["has_moving_finger_contact"]),
+                float(info["has_opposing_finger_contacts"]),
+                float(info["cube_between_fingers"]),
+            ]
+        )
+        pregrasp_progress = self.hamacher(close_progress, closed_progress)
+        grasp_progress = self.soft_or(pregrasp_progress, contact_progress)
+        grasp_progress = self.soft_or(
+            grasp_progress,
+            0.95 if info["is_grasping"] else 0.0,
+        )
+
+        lift_start_z = max(self.lift_height_threshold, table_cube_z)
+        lift_goal_z = lift_start_z + 0.12
+        height_progress = self.tolerance(
+            cube_z,
+            bounds=(lift_goal_z, np.inf),
+            margin=lift_goal_z - lift_start_z,
+            value_at_margin=0.1,
+        )
+        lift_progress = self.hamacher(grasp_progress, height_progress)
+
+        in_place_progress = self.tolerance(
+            cube_to_target,
+            bounds=(0.0, self.success_threshold),
+            margin=0.30,
+            value_at_margin=0.1,
+        )
+        lifted_progress = self.tolerance(
+            cube_z,
+            bounds=(lift_start_z + 0.04, np.inf),
+            margin=0.08,
+            value_at_margin=0.1,
+        )
+        move_progress = self.hamacher(
+            self.hamacher(grasp_progress, lifted_progress),
+            in_place_progress,
+        )
+
+        xy_dist_to_target = np.linalg.norm(cube_pos[:2] - self.target_pos[:2])
+        xy_place_progress = self.tolerance(
+            xy_dist_to_target,
+            bounds=(0.0, self.success_threshold),
+            margin=0.12,
+            value_at_margin=0.1,
+        )
+        height_error = abs(cube_z - target_z)
+        height_place_progress = self.tolerance(
+            height_error,
+            bounds=(0.0, 0.008),
+            margin=0.08,
+            value_at_margin=0.1,
+        )
+        gripper_open_progress = self.tolerance(
+            gripper_state,
+            bounds=(self.gripper_closed_threshold + 0.08, np.inf),
+            margin=0.15,
+            value_at_margin=0.1,
+        )
+        place_ready = self.hamacher(xy_place_progress, height_place_progress)
+        place_progress = self.hamacher(place_ready, gripper_open_progress)
+        place_progress = self.soft_or(
+            place_progress,
+            0.95 if info["is_success"] else 0.0,
+        )
+
+        reward = (
+            approach_upper * approach_progress
+            + grasp_upper * grasp_progress
+            + lift_upper * lift_progress
+            + move_upper * move_progress
+            + place_upper * place_progress
+        )
+
+        if cube_z < 0.0:
+            reward -= self.drop_penalty
+
+        if action is not None and self.prev_action is not None:
+            action_penalty = 0.01 * np.sum(action**2)
+            smoothness_penalty = 0.005 * np.sum((action - self.prev_action)**2)
+            reward -= action_penalty + smoothness_penalty
+        if action is not None:
+            self.prev_action = action.copy()
+
+        self.prev_gripper_to_cube = gripper_to_cube
+        self.prev_cube_to_target = cube_to_target
+        info["reward_components"] = {
+            "approach": approach_upper * approach_progress,
+            "grasp": grasp_upper * grasp_progress,
+            "lift": lift_upper * lift_progress,
+            "move": move_upper * move_progress,
+            "place": place_upper * place_progress,
+            "approach_progress": approach_progress,
+            "grasp_progress": grasp_progress,
+            "lift_progress": lift_progress,
+            "move_progress": move_progress,
+            "place_progress": place_progress,
+        }
         return reward
 
     def render(self, camera: str = "closeup") -> np.ndarray | None:
