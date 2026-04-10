@@ -10,7 +10,7 @@ training:
   eval_freq: 10000
   save_freq: 100000
   video_log_freq: 10000
-  video_camera: "default"  # Camera name from MuJoCo XML for video recording
+  video_camera: "wide"  # Same camera setting as train_lift.py default
   seed: 42
 
 sac:
