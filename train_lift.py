@@ -206,6 +206,7 @@ def main():
             gamma=sac_cfg["gamma"],
             train_freq=sac_cfg["train_freq"],
             gradient_steps=sac_cfg["gradient_steps"],
+            target_entropy=sac_cfg.get("target_entropy", "auto"),
             verbose=1,
             seed=train_cfg["seed"],
             device=device,
