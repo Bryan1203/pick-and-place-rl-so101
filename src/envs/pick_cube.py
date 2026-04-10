@@ -399,7 +399,7 @@ class PickCubeEnv(gym.Env):
         info = self._get_info()
 
         # Calculate reward
-        reward = self._YK_compute_reward_v1(info,action)
+        reward = self._YK_compute_reward_v0(info,action)
 
         # Check termination
         terminated = info["is_success"]
@@ -453,6 +453,52 @@ class PickCubeEnv(gym.Env):
         #     reward -= self.drop_penalty
 
         return reward
+    def _YK_compute_reward_v0(self, info: dict[str, Any], action: np.ndarray=None) -> float:
+        """Vallina reward
+
+        reward terms:
+        gripper to cube progress
+        cube to target progress
+        """
+        gripper_to_cube = info["gripper_to_cube"]
+        cube_to_target = info["cube_to_target"]
+
+
+        reward = 0.0
+
+        
+        # Stage 1: Reach - always encourage gripper to approach cube
+        if self.prev_gripper_to_cube is not None:
+            reach_reward = -self.reach_weight * (gripper_to_cube - self.prev_gripper_to_cube)
+        else:
+            reach_reward = -self.reach_weight * gripper_to_cube
+        
+        reward += reach_reward
+
+       
+        if self.prev_cube_to_target is not None:
+            place_reward = -self.place_weight * (cube_to_target - self.prev_cube_to_target)
+        else:
+            place_reward = -self.place_weight * cube_to_target
+        reward += place_reward
+        
+        ## smooth action penalty to encourage more stable policies (YK's addition)
+        if self.prev_action is not None:  # Only apply penalty after first step
+            action_penalty = 0.01 * np.sum(action**2)
+            smoothness_penalty = 0.005 * np.sum((action - self.prev_action)**2)
+            reward -= action_penalty + smoothness_penalty
+        if action is not None:
+            self.prev_action = action.copy()
+
+
+        # Penalty if cube falls off table
+        # if cube_z < 0.0:
+        #     reward -= self.drop_penalty
+        self.prev_gripper_to_cube = gripper_to_cube
+        self.prev_cube_to_target = cube_to_target
+
+        return reward
+
     def _YK_compute_reward_v1(self, info: dict[str, Any], action: np.ndarray=None) -> float:
         """Compute staged reward based on current state.
 
@@ -473,9 +519,8 @@ class PickCubeEnv(gym.Env):
         is_lifted = info["is_lifted"]
 
         reward = 0.0
-        # Stage 0: Refresh prev step
-        self.prev_gripper_to_cube = gripper_to_cube
-        self.prev_cube_to_target = cube_to_target
+
+        
         # Stage 1: Reach - always encourage gripper to approach cube
         if self.prev_gripper_to_cube is not None:
             reach_reward = self.reach_weight * (self.prev_gripper_to_cube - gripper_to_cube)
@@ -521,15 +566,35 @@ class PickCubeEnv(gym.Env):
         # Penalty if cube falls off table
         # if cube_z < 0.0:
         #     reward -= self.drop_penalty
-
+        self.prev_gripper_to_cube = gripper_to_cube
+        self.prev_cube_to_target = cube_to_target
         return reward
 
-    def render(self) -> np.ndarray | None:
+    def render(self, camera: str = "closeup") -> np.ndarray | None:
         """Render the environment."""
         if self.render_mode == "rgb_array":
             if self._renderer is None:
                 self._renderer = mujoco.Renderer(self.model, height=480, width=640)
-            self._renderer.update_scene(self.data)
+            cam = mujoco.MjvCamera()
+            if camera == "closeup":
+                # Side view close to cube
+                cam.lookat[:] = [0.40, -0.10, 0.03]
+                cam.distance = 0.35
+                cam.azimuth = 90
+                cam.elevation = -15
+            elif camera == "wide":
+                # Diagonal view of arm and cube
+                cam.lookat[:] = [0.25, -0.05, 0.05]
+                cam.distance = 0.8
+                cam.azimuth = 135
+                cam.elevation = -25
+            else:  # "wide2"
+                # Diagonal view from other side
+                cam.lookat[:] = [0.25, -0.05, 0.05]
+                cam.distance = 0.8
+                cam.azimuth = 45
+                cam.elevation = -25
+            self._renderer.update_scene(self.data, camera=cam)
             return self._renderer.render()
         return None
 
