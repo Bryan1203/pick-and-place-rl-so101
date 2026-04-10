@@ -374,7 +374,7 @@ def reward_v21(env, info: dict, was_grasping: bool = False, action: np.ndarray |
     # --- Success ---
     success_bonus = 10.0 if info.get("is_success", False) else 0.0
 
-    reward = base + lift_bonus + release_reward - push_penalty + success_bonus
+    reward = base + object_grasped + lift_bonus + release_reward - push_penalty + success_bonus
 
     # --- Stage classification (for W&B logging) ---
     if info.get("is_success", False):
@@ -391,6 +391,7 @@ def reward_v21(env, info: dict, was_grasping: bool = False, action: np.ndarray |
     # --- Populate info for callback logging ---
     info["reward_components"] = {
         "base_hamacher": base,
+        "object_grasped": object_grasped,
         "lift_bonus": lift_bonus,
         "release": release_reward,
         "push_penalty": -push_penalty,

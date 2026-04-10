@@ -84,8 +84,8 @@ vol = modal.Volume.from_name("pick-101-runs", create_if_missing=True)
 
 
 @app.function(
-    gpu="A1",                    # Fast and cheap ($0.80/hr), plenty for state-based SAC
-    timeout=20 * 3600,            # 6 hour max
+    gpu="A100",                    # Fast and cheap ($0.80/hr), plenty for state-based SAC
+    timeout=24 * 3600,            # 24 hour max
     volumes={"/runs": vol},
     secrets=[modal.Secret.from_name("wandb-secret")],  # WANDB_API_KEY
 )
@@ -143,19 +143,28 @@ def train(
 
 
 # ---------------------------------------------------------------------------
-# Entry point: `uv run modal run modal_train.py`
+# Entry point: `uv run modal run modal_train_lift.py`
 # ---------------------------------------------------------------------------
 @app.local_entrypoint()
 def main(
     config: str = "configs/state_based/pick_place_container.yaml",
     timesteps: int = 0,
     no_wandb: bool = False,
+    wandb_name: str = "",
+    resume: str = "",
+    pretrained: str = "",
 ):
     extra_args = []
     if timesteps > 0:
         extra_args.extend(["--timesteps", str(timesteps)])
     if no_wandb:
         extra_args.append("--no-wandb")
+    if wandb_name:
+        extra_args.extend(["--wandb-name", wandb_name])
+    if resume:
+        extra_args.extend(["--resume", resume])
+    if pretrained:
+        extra_args.extend(["--pretrained", pretrained])
 
     train.remote(
         config=config,
