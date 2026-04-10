@@ -9,6 +9,8 @@ Legacy rewards (for checkpoint compatibility only):
 """
 
 from .lift_rewards import reward_v11, reward_v19, reward_v20, reward_v21
+from .pick_rewards import reward_v22
+
 from ._legacy_rewards import (
     reward_v1,
     reward_v2,
@@ -57,6 +59,8 @@ REWARD_FUNCTIONS = {
     # Pick-and-place
     "v20": reward_v20,
     "v21": reward_v21,
+    # Pick-and-place in pick_rewards.py
+    "v22": reward_v22,
 }
 
 __all__ = ["REWARD_FUNCTIONS", "reward_v11", "reward_v19", "reward_v20", "reward_v21"]

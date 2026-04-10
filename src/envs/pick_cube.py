@@ -68,6 +68,18 @@ class PickCubeEnv(gym.Env):
         self.model = mujoco.MjModel.from_xml_path(str(scene_path))
         self.data = mujoco.MjData(self.model)
 
+        # Finger pad geom IDs for grasp detection. A valid grasp should pinch the
+        # cube between these pads, not merely touch any gripper mesh.
+        self._static_pad_geom_id = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_GEOM, "static_finger_pad"
+        )
+        self._moving_pad_geom_id = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_GEOM, "moving_finger_pad"
+        )
+        self._cube_geom_id = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_GEOM, "cube_geom"
+        )
+
         # Get joint and actuator info
         self.n_joints = 6
         self.joint_names = [
@@ -133,9 +145,6 @@ class PickCubeEnv(gym.Env):
 
     def _has_cube_contact(self) -> bool:
         """Check if gripper is in contact with the cube."""
-        cube_geom_id = mujoco.mj_name2id(
-            self.model, mujoco.mjtObj.mjOBJ_GEOM, "cube_geom"
-        )
         # Gripper geoms are 25-30 (gripper body and moving_jaw)
         gripper_geom_ids = set(range(25, 31))
 
@@ -144,25 +153,162 @@ class PickCubeEnv(gym.Env):
             geom2 = self.data.contact[i].geom2
 
             # Check if contact is between gripper and cube
-            if geom1 == cube_geom_id and geom2 in gripper_geom_ids:
+            if geom1 == self._cube_geom_id and geom2 in gripper_geom_ids:
                 return True
-            if geom2 == cube_geom_id and geom1 in gripper_geom_ids:
+            if geom2 == self._cube_geom_id and geom1 in gripper_geom_ids:
                 return True
 
         return False
 
+    def _check_cube_finger_contacts(self) -> tuple[bool, bool]:
+        """Check if cube contacts the static and moving finger pads."""
+        has_static_contact = False
+        has_moving_contact = False
+
+        for i in range(self.data.ncon):
+            geom1 = self.data.contact[i].geom1
+            geom2 = self.data.contact[i].geom2
+
+            other_geom = None
+            if geom1 == self._cube_geom_id:
+                other_geom = geom2
+            elif geom2 == self._cube_geom_id:
+                other_geom = geom1
+
+            if other_geom == self._static_pad_geom_id:
+                has_static_contact = True
+            elif other_geom == self._moving_pad_geom_id:
+                has_moving_contact = True
+
+        return has_static_contact, has_moving_contact
+
+    def _finger_axis(self) -> tuple[np.ndarray | None, float]:
+        """Return the normalized axis from static pad to moving pad."""
+        static_pos = self.data.geom_xpos[self._static_pad_geom_id]
+        moving_pos = self.data.geom_xpos[self._moving_pad_geom_id]
+        finger_axis = moving_pos - static_pos
+        finger_gap = np.linalg.norm(finger_axis)
+
+        if finger_gap < 1e-6:
+            return None, finger_gap
+
+        return finger_axis / finger_gap, finger_gap
+
+    def _cube_center_between_fingers(self, cube_pos: np.ndarray) -> bool:
+        """Check if the cube center is inside the finger gap region."""
+        finger_axis, finger_gap = self._finger_axis()
+        if finger_axis is None:
+            return False
+
+        static_pos = self.data.geom_xpos[self._static_pad_geom_id]
+        cube_from_static = cube_pos - static_pos
+        axis_coord = np.dot(cube_from_static, finger_axis)
+        closest_point = static_pos + axis_coord * finger_axis
+        lateral_dist = np.linalg.norm(cube_pos - closest_point)
+
+        cube_half_size = 0.015
+        axis_margin = cube_half_size
+        lateral_margin = 0.025
+
+        return (
+            -axis_margin <= axis_coord <= finger_gap + axis_margin
+            and lateral_dist <= lateral_margin
+        )
+
+    def _has_opposing_finger_contacts(self, cube_pos: np.ndarray) -> bool:
+        """Check if finger pad contacts oppose each other across the cube.
+
+        Each contact normal is oriented from the pad toward the cube center,
+        then compared with the finger closing axis. This rejects cases where
+        both fingertips touch the same side/top of the cube.
+        """
+        finger_axis, _ = self._finger_axis()
+        if finger_axis is None:
+            return False
+
+        static_toward_cube = None
+        moving_toward_cube = None
+        static_axis_projection = -np.inf
+        moving_axis_projection = np.inf
+
+        for i in range(self.data.ncon):
+            contact = self.data.contact[i]
+            geom1 = contact.geom1
+            geom2 = contact.geom2
+            normal = contact.frame[:3].copy()
+
+            pad_geom = None
+            if self._cube_geom_id in (geom1, geom2):
+                if self._static_pad_geom_id in (geom1, geom2):
+                    pad_geom = self._static_pad_geom_id
+                elif self._moving_pad_geom_id in (geom1, geom2):
+                    pad_geom = self._moving_pad_geom_id
+
+            if pad_geom is None:
+                continue
+
+            pad_pos = self.data.geom_xpos[pad_geom]
+            pad_to_cube = cube_pos - pad_pos
+            if np.dot(normal, pad_to_cube) < 0.0:
+                normal = -normal
+
+            axis_projection = np.dot(normal, finger_axis)
+            if (
+                pad_geom == self._static_pad_geom_id
+                and axis_projection > static_axis_projection
+            ):
+                static_axis_projection = axis_projection
+                static_toward_cube = normal
+            elif (
+                pad_geom == self._moving_pad_geom_id
+                and axis_projection < moving_axis_projection
+            ):
+                moving_axis_projection = axis_projection
+                moving_toward_cube = normal
+
+        if static_toward_cube is None or moving_toward_cube is None:
+            return False
+
+        normal_alignment_threshold = 0.5
+        static_pushes_toward_moving = (
+            static_axis_projection > normal_alignment_threshold
+        )
+        moving_pushes_toward_static = (
+            moving_axis_projection < -normal_alignment_threshold
+        )
+        contacts_are_opposed = (
+            np.dot(static_toward_cube, moving_toward_cube)
+            < -normal_alignment_threshold
+        )
+
+        return (
+            static_pushes_toward_moving
+            and moving_pushes_toward_static
+            and contacts_are_opposed
+        )
+
     def _is_grasping(self, gripper_pos: np.ndarray, cube_pos: np.ndarray) -> bool:
         """Check if gripper is grasping the cube.
 
-        Requires BOTH:
-        1. Physical contact between gripper and cube
+        Requires ALL:
+        1. Physical contact on both finger pads
         2. Gripper is closed
+        3. Contacts oppose each other along the finger closing axis
+        4. Cube center is between the two finger pads
         """
         gripper_state = self._get_gripper_state()
         is_closed = gripper_state < self.gripper_closed_threshold
-        has_contact = self._has_cube_contact()
+        has_static_contact, has_moving_contact = self._check_cube_finger_contacts()
+        is_pinched = has_static_contact and has_moving_contact
+        has_opposing_contacts = self._has_opposing_finger_contacts(cube_pos)
+        cube_between_fingers = self._cube_center_between_fingers(cube_pos)
 
-        return is_closed and has_contact
+        return (
+            is_closed
+            and is_pinched
+            and has_opposing_contacts
+            and cube_between_fingers
+        )
 
     def _get_info(self) -> dict[str, Any]:
         """Get additional info."""
@@ -174,6 +320,9 @@ class PickCubeEnv(gym.Env):
         cube_z = cube_pos[2]
 
         has_contact = self._has_cube_contact()
+        has_static_contact, has_moving_contact = self._check_cube_finger_contacts()
+        has_opposing_contacts = self._has_opposing_finger_contacts(cube_pos)
+        cube_between_fingers = self._cube_center_between_fingers(cube_pos)
         is_grasping = self._is_grasping(gripper_pos, cube_pos)
         is_lifted = is_grasping and cube_z > self.lift_height_threshold
 
@@ -184,6 +333,10 @@ class PickCubeEnv(gym.Env):
             "gripper_pos": gripper_pos.copy(),
             "gripper_state": self._get_gripper_state(),
             "has_contact": has_contact,
+            "has_static_finger_contact": has_static_contact,
+            "has_moving_finger_contact": has_moving_contact,
+            "has_opposing_finger_contacts": has_opposing_contacts,
+            "cube_between_fingers": cube_between_fingers,
             "is_grasping": is_grasping,
             "is_lifted": is_lifted,
             "is_success": cube_to_target < self.success_threshold,

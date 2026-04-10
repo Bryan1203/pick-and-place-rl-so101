@@ -1,0 +1,47 @@
+# Pick Cube Task — PickCubeEnv with joint-space actions
+# Agent grasps cube, lifts it, moves to target, and places it.
+experiment:
+  name: "pick_cube"
+  base_dir: "runs"
+  wandb_project: "pick-101"
+
+training:
+  timesteps: 2000000
+  eval_freq: 10000
+  save_freq: 100000
+  video_log_freq: 10000
+  video_camera: "default"  # Camera name from MuJoCo XML for video recording
+  seed: 42
+
+sac:
+  learning_rate: 3.0e-4
+  buffer_size: 300000        # Larger buffer; harder long-horizon task
+  learning_starts: 5000
+  batch_size: 256
+  tau: 0.005
+  gamma: 0.99
+  train_freq: 1
+  gradient_steps: 1
+
+env:
+  normalize_obs: true
+  normalize_reward: true
+  max_episode_steps: 400     # More time for pick + transport + place
+  action_scale: 0.05         # Scale for delta joint positions
+
+  # Reward shaping (passed as reward_config dict to PickCubeEnv)
+  reward_config:
+    grasp_distance_threshold: 0.03
+    gripper_closed_threshold: 0.3
+    lift_height_threshold: 0.03
+    success_threshold: 0.03
+    reach_weight: 1.0
+    grasp_bonus: 1.0
+    lift_bonus: 2.0
+    lift_height_scale: 10.0
+    place_weight: 2.0
+    success_bonus: 10.0
+    drop_penalty: 5.0
+
+eval:
+  episodes: 10
