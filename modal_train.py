@@ -29,6 +29,7 @@ Usage:
 
 from pathlib import Path
 from collections import deque
+import time
 
 import modal
 
@@ -98,10 +99,11 @@ vol = modal.Volume.from_name("pick-101-runs", create_if_missing=True)
 
 
 @app.function(
-    gpu="A100",                  # Sufficient for state-based SAC; more VRAM than A1
+    gpu="T4",                  # Sufficient for state-based SAC; more VRAM than A1
     timeout=20 * 3600,           # 20 hour max for long pick-place runs
     volumes={"/runs": vol},
     secrets=[modal.Secret.from_name("wandb-secret")],  # WANDB_API_KEY
+    memory=64 * 1024,           # 64 GB RAM preserve
 )
 def train(
     config: str = "configs/pick_cube.yaml",
@@ -112,6 +114,21 @@ def train(
     import subprocess
 
     os.chdir("/repo")
+
+    def sync_runs_to_volume():
+        local_runs = "/repo/runs"
+        if not os.path.exists(local_runs):
+            return
+
+        for item in os.listdir(local_runs):
+            src = os.path.join(local_runs, item)
+            dst = os.path.join("/runs", item)
+            if os.path.isdir(src):
+                shutil.copytree(src, dst, dirs_exist_ok=True)
+            else:
+                shutil.copy2(src, dst)
+        vol.commit()
+        print("\nRuns synced to modal volume 'pick-101-runs'")
 
     cmd = [
         "python", "train_v2.py",
@@ -131,26 +148,29 @@ def train(
     )
 
     recent_output = deque(maxlen=200)
+    sync_interval_s = 30 * 60
+    last_sync = time.monotonic()
 
-    # Stream output live
-    for line in proc.stdout:
-        recent_output.append(line.rstrip("\n"))
-        print(line, end="")
+    # Stream output live and periodically sync checkpoints to the volume.
+    while True:
+        line = proc.stdout.readline()
+        if line:
+            recent_output.append(line.rstrip("\n"))
+            print(line, end="")
+        elif proc.poll() is not None:
+            break
+        else:
+            time.sleep(1.0)
+
+        now = time.monotonic()
+        if now - last_sync >= sync_interval_s:
+            sync_runs_to_volume()
+            last_sync = now
 
     proc.wait()
 
-    # Copy runs to persistent volume
-    local_runs = "/repo/runs"
-    if os.path.exists(local_runs):
-        for item in os.listdir(local_runs):
-            src = os.path.join(local_runs, item)
-            dst = os.path.join("/runs", item)
-            if os.path.isdir(src):
-                shutil.copytree(src, dst, dirs_exist_ok=True)
-            else:
-                shutil.copy2(src, dst)
-        vol.commit()
-        print(f"\nRuns synced to modal volume 'pick-101-runs'")
+    # Final sync to persistent volume
+    sync_runs_to_volume()
 
     if proc.returncode != 0:
         tail = "\n".join(recent_output).strip()

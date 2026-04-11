@@ -8,9 +8,9 @@ experiment:
 training:
   timesteps: 1024000
   n_envs: 256
-  eval_freq: 102400
-  save_freq: 102400
-  video_log_freq: 102400
+  eval_freq: 51200
+  save_freq: 51200
+  video_log_freq: 51200
   video_camera: "wide"
   seed: 42
 
