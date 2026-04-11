@@ -7,6 +7,7 @@ experiment:
 
 training:
   timesteps: 2000000
+  n_envs: 1
   eval_freq: 10000
   save_freq: 100000
   video_log_freq: 10000
@@ -25,7 +26,7 @@ sac:
 
 env:
   normalize_obs: true
-  normalize_reward: true
+  normalize_reward: false
   max_episode_steps: 400     # More time for pick + transport + place
   action_scale: 0.05         # Scale for delta joint positions
 
@@ -36,10 +37,10 @@ env:
     lift_height_threshold: 0.03
     success_threshold: 0.03
     reach_weight: 1.0
-    grasp_bonus: 1.0
-    lift_bonus: 2.0
-    lift_height_scale: 10.0
-    place_weight: 2.0
+    grasp_bonus: 2.0
+    lift_bonus: 4.0
+    lift_height_scale: 15.0
+    place_weight: 1.0
     success_bonus: 10.0
     drop_penalty: 5.0
 

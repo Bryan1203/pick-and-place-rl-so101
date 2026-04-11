@@ -33,6 +33,7 @@ from wandb.integration.sb3 import WandbCallback
 
 from src.callbacks.plot_callback import PlotLearningCurveCallback
 from src.callbacks.reward_component_callback import RewardComponentCallback
+from src.callbacks.wandb_checkpoint_callback import WandbCheckpointCallback
 from src.callbacks.wandb_video_callback import WandbVideoCallback
 from src.envs.pick_cube import PickCubeEnv
 
@@ -246,6 +247,12 @@ def main():
         callbacks.append(WandbCallback(
             gradient_save_freq=train_cfg.get("save_freq", 100000),
             verbose=2,
+        ))
+        callbacks.append(WandbCheckpointCallback(
+            checkpoint_dir=output_dir / "checkpoints",
+            output_dir=output_dir,
+            check_freq=train_cfg.get("save_freq", 100000),
+            verbose=1,
         ))
         # WandbVideoCallback omitted: it is hardcoded to LiftCubeCartesianEnv
         # and PickCubeEnv.render() has no camera= argument.
