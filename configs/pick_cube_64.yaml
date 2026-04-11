@@ -6,18 +6,18 @@ experiment:
   wandb_project: "pick-101"
 
 training:
-  timesteps: 24000000
+  timesteps: 1024000
   n_envs: 64
-  eval_freq: 160000
-  save_freq: 1600000
-  video_log_freq: 160000
+  eval_freq: 102400
+  save_freq: 102400
+  video_log_freq: 102400
   video_camera: "wide"
   seed: 42
 
 sac:
   learning_rate: 3.0e-4
   buffer_size: 1000000
-  learning_starts: 50000
+  learning_starts: 25600
   batch_size: 2048
   tau: 0.005
   gamma: 0.99

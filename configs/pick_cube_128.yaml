@@ -1,5 +1,5 @@
 # Pick Cube Task — PickCubeEnv with joint-space actions
-# 1024-env reference configuration
+# 128-env reference configuration
 experiment:
   name: "pick_cube"
   base_dir: "runs"
@@ -7,7 +7,7 @@ experiment:
 
 training:
   timesteps: 1024000
-  n_envs: 1024
+  n_envs: 128
   eval_freq: 102400
   save_freq: 102400
   video_log_freq: 102400
@@ -16,13 +16,13 @@ training:
 
 sac:
   learning_rate: 3.0e-4
-  buffer_size: 16000000
-  learning_starts: 204800
-  batch_size: 32768
+  buffer_size: 2000000
+  learning_starts: 38400
+  batch_size: 4096
   tau: 0.005
   gamma: 0.99
   train_freq: 1
-  gradient_steps: 256
+  gradient_steps: 32
 
 env:
   normalize_obs: true
