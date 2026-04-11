@@ -105,8 +105,9 @@ class PickCubeEnv(gym.Env):
             low=-np.inf, high=np.inf, shape=(obs_dim,), dtype=np.float32
         )
 
-        # Target position: inside bowl (bowl is at y=0.10, target z=0.04 above ground)
-        self.target_pos = np.array([0.40, 0.10, 0.059]) # z= 0.044 (box bottom's top surface) + 0.015 (half cube size + small margin)
+        # Target position: centered inside the floor-level container.
+        # container floor top = 0.004, cube half height = 0.015 => target z = 0.019
+        self.target_pos = np.array([0.40, 0.10, 0.019])
 
         # YK's additions for reward shaping 
         self.prev_gripper_to_cube = None 
@@ -402,8 +403,10 @@ class PickCubeEnv(gym.Env):
         obs = self._get_obs()
         info = self._get_info()
 
-        # Calculate reward
-        reward = self._YK_compute_reward_v2(info,action)
+        # Calculate reward and expose shaped components for logging/debugging.
+        reward, reward_components, reward_stage = self._compute_reward(info)
+        info["reward_components"] = reward_components
+        info["reward_stage"] = reward_stage
 
         # Check termination
         terminated = info["is_success"]
@@ -411,7 +414,9 @@ class PickCubeEnv(gym.Env):
 
         return obs, reward, terminated, truncated, info
 
-    def _compute_reward(self, info: dict[str, Any]) -> float:
+    def _compute_reward(
+        self, info: dict[str, Any]
+    ) -> tuple[float, dict[str, float], int]:
         """Compute staged reward based on current state.
 
         Stages:
@@ -430,33 +435,56 @@ class PickCubeEnv(gym.Env):
         is_lifted = info["is_lifted"]
 
         reward = 0.0
+        reward_components = {
+            "reach": 0.0,
+            "grasp": 0.0,
+            "lift": 0.0,
+            "place": 0.0,
+            "success": 0.0,
+        }
 
         # Stage 1: Reach - always encourage gripper to approach cube
         reach_reward = -self.reach_weight * gripper_to_cube
         reward += reach_reward
+        reward_components["reach"] = float(reach_reward)
 
         # Stage 2: Grasp bonus - reward for closing gripper around cube
         if is_grasping:
             reward += self.grasp_bonus
+            reward_components["grasp"] = float(self.grasp_bonus)
 
         # Stage 3: Lift bonus - reward for lifting cube off ground
         if is_lifted:
             lift_reward = self.lift_bonus + cube_z * self.lift_height_scale
             reward += lift_reward
+            reward_components["lift"] = float(lift_reward)
 
             # Stage 4: Place - only encourage moving to target when lifted
             place_reward = -self.place_weight * cube_to_target
             reward += place_reward
+            reward_components["place"] = float(place_reward)
 
         # Stage 5: Success bonus
         if info["is_success"]:
             reward += self.success_bonus
+            reward_components["success"] = float(self.success_bonus)
 
         # Penalty if cube falls off table
         # if cube_z < 0.0:
         #     reward -= self.drop_penalty
 
-        return reward
+        if info["is_success"]:
+            reward_stage = 4
+        elif is_lifted:
+            reward_stage = 3
+        elif is_grasping:
+            reward_stage = 2
+        elif info["has_contact"]:
+            reward_stage = 1
+        else:
+            reward_stage = 0
+
+        return reward, reward_components, reward_stage
     def _YK_compute_reward_v0(self, info: dict[str, Any], action: np.ndarray=None) -> float:
         """Vallina reward
 

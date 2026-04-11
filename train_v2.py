@@ -28,7 +28,7 @@ import wandb
 import yaml
 from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 from wandb.integration.sb3 import WandbCallback
 
 from src.callbacks.plot_callback import PlotLearningCurveCallback
@@ -49,6 +49,14 @@ def make_env(env_cfg: dict):
         action_scale=env_cfg.get("action_scale", 0.05),
         reward_config=env_cfg.get("reward_config", None),
     )
+
+
+def make_env_fn(env_cfg: dict):
+    """Create a picklable env factory for vectorized training."""
+    def _init():
+        return make_env(env_cfg)
+
+    return _init
 
 
 def main():
@@ -114,7 +122,11 @@ def main():
         vec_normalize_path = resume_dir / "vec_normalize.pkl"
 
     # Create training environment
-    env = DummyVecEnv([lambda: make_env(env_cfg)])
+    n_envs = int(train_cfg.get("n_envs", 1))
+    if n_envs > 1:
+        env = SubprocVecEnv([make_env_fn(env_cfg) for _ in range(n_envs)])
+    else:
+        env = DummyVecEnv([make_env_fn(env_cfg)])
 
     if vec_normalize_path and vec_normalize_path.exists():
         env = VecNormalize.load(vec_normalize_path, env)
@@ -131,8 +143,8 @@ def main():
         if pretrained:
             print("Using fresh VecNormalize for transfer (not loading old stats)")
 
-    # Create eval environment (no reward normalization for fair eval)
-    eval_env = DummyVecEnv([lambda: make_env(env_cfg)])
+    # Create eval environment (single-env, no reward normalization for fair eval)
+    eval_env = DummyVecEnv([make_env_fn(env_cfg)])
     if vec_normalize_path and vec_normalize_path.exists():
         eval_env = VecNormalize.load(vec_normalize_path, eval_env)
         eval_env.training = False
