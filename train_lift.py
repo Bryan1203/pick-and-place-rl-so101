@@ -13,7 +13,7 @@ import torch
 import wandb
 import yaml
 from stable_baselines3 import SAC
-from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
+from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback, EvalCallback
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from wandb.integration.sb3 import WandbCallback
 
@@ -46,6 +46,65 @@ def make_env(env_cfg: dict):
         lock_wrist=env_cfg.get("lock_wrist", False),
         place_target=place_target,
     )
+
+
+class SuccessRateCallback(BaseCallback):
+    """Log the success rate over completed training episodes."""
+
+    def __init__(self, log_freq: int = 10000, verbose: int = 0):
+        super().__init__(verbose)
+        self.log_freq = log_freq
+        self._last_log = 0
+        self._successes: list[float] = []
+
+    def _on_step(self) -> bool:
+        dones = self.locals.get("dones", [])
+        infos = self.locals.get("infos", [])
+
+        for done, info in zip(dones, infos):
+            if not done:
+                continue
+
+            success = info.get("is_success")
+            if success is None:
+                final_info = info.get("final_info")
+                if isinstance(final_info, dict):
+                    success = final_info.get("is_success")
+
+            if success is not None:
+                self._successes.append(float(success))
+
+        if self.num_timesteps - self._last_log >= self.log_freq and self._successes:
+            self._flush()
+            self._last_log = self.num_timesteps
+
+        return True
+
+    def _on_training_end(self) -> None:
+        if self._successes:
+            self._flush()
+
+    def _flush(self) -> None:
+        success_rate = float(sum(self._successes) / len(self._successes))
+        log_dict = {
+            "train/success_rate": success_rate,
+            "train/success_episodes": len(self._successes),
+        }
+
+        if wandb.run is not None:
+            wandb.log(log_dict, step=self.num_timesteps)
+
+        if self.logger is not None:
+            for key, value in log_dict.items():
+                self.logger.record(key, value)
+
+        if self.verbose:
+            print(
+                f"[SuccessRate] step={self.num_timesteps} "
+                f"episodes={len(self._successes)} success_rate={success_rate:.3f}"
+            )
+
+        self._successes = []
 
 
 def main():
@@ -242,7 +301,18 @@ def main():
         verbose=1,
     )
 
-    callbacks = [checkpoint_callback, eval_callback, plot_callback, reward_component_callback]
+    success_rate_callback = SuccessRateCallback(
+        log_freq=train_cfg.get("eval_freq", 10000),
+        verbose=1,
+    )
+
+    callbacks = [
+        checkpoint_callback,
+        eval_callback,
+        plot_callback,
+        reward_component_callback,
+        success_rate_callback,
+    ]
     if use_wandb:
         callbacks.append(WandbCallback(
             gradient_save_freq=train_cfg.get("save_freq", 100000),

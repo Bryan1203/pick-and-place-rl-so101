@@ -1,6 +1,7 @@
 """Reward functions for lift cube environment.
 
 Working rewards (use these for new training):
+- sparse_success: Sparse success-only lift reward
 - v11: State-based (SAC) - 100% success at 1M steps
 - v19: Image-based (DrQ-v2) - 100% success at 2M steps
 
@@ -8,7 +9,7 @@ Legacy rewards (for checkpoint compatibility only):
 - v1-v10, v12-v18: Historical experiments
 """
 
-from .lift_rewards import reward_v11, reward_v19, reward_v20, reward_v21
+from .lift_rewards import reward_sparse_success, reward_v11, reward_v19, reward_v20, reward_v21
 from .pick_rewards import reward_v22
 
 from ._legacy_rewards import (
@@ -44,6 +45,8 @@ REWARD_FUNCTIONS = {
     "v8": reward_v8,
     "v9": reward_v9,
     "v10": reward_v10,
+    # Working sparse lift reward
+    "sparse_success": reward_sparse_success,
     # Working (state-based)
     "v11": reward_v11,
     # Legacy (image-based experiments)
@@ -63,4 +66,11 @@ REWARD_FUNCTIONS = {
     "v22": reward_v22,
 }
 
-__all__ = ["REWARD_FUNCTIONS", "reward_v11", "reward_v19", "reward_v20", "reward_v21"]
+__all__ = [
+    "REWARD_FUNCTIONS",
+    "reward_sparse_success",
+    "reward_v11",
+    "reward_v19",
+    "reward_v20",
+    "reward_v21",
+]

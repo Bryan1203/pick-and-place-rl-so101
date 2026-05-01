@@ -1,11 +1,11 @@
 """Run SAC training on Modal with GPU.
 
 Usage:
-    # Run with default config (pick_place_container v21)
+    # Run with default config (grasp, lift, and hold)
     uv run modal run modal_train.py
 
     # Run with custom config
-    uv run modal run modal_train.py --config configs/state_based/pick_place_container.yaml
+    uv run modal run modal_train.py --config configs/state_based/curriculum_stage3.yaml
 
     # Run with extra args
     uv run modal run modal_train.py --timesteps 1000000
@@ -68,8 +68,10 @@ image = (
         remote_path="/repo",
         copy=True,
         ignore=modal.FilePatternMatcher(
-            ".git/", "__pycache__/", ".venv/", "runs/", "*.pyc", "wandb/",
-            "*.egg-info/", "MUJOCO_LOG.TXT",
+            ".git/", "**/.git/**",
+            "__pycache__/", "**/__pycache__/**",
+            ".venv/", ".cache/", "runs/", "*.pyc", "wandb/",
+            "*.egg-info/", "**/*.egg-info/**", "MUJOCO_LOG.TXT",
         ),
     )
     # Install robobase from the bundled submodule
@@ -84,13 +86,13 @@ vol = modal.Volume.from_name("pick-101-runs", create_if_missing=True)
 
 
 @app.function(
-    gpu="A100",                    # Fast and cheap ($0.80/hr), plenty for state-based SAC
+    gpu="A10",                    # Fast and cheap ($0.80/hr), plenty for state-based SAC
     timeout=24 * 3600,            # 24 hour max
     volumes={"/runs": vol},
     secrets=[modal.Secret.from_name("wandb-secret")],  # WANDB_API_KEY
 )
 def train(
-    config: str = "configs/state_based/pick_place_container.yaml",
+    config: str = "configs/state_based/curriculum_stage3.yaml",
     extra_args: list[str] | None = None,
 ):
     import os
@@ -147,7 +149,7 @@ def train(
 # ---------------------------------------------------------------------------
 @app.local_entrypoint()
 def main(
-    config: str = "configs/state_based/pick_place_container.yaml",
+    config: str = "configs/state_based/curriculum_stage3.yaml",
     timesteps: int = 0,
     no_wandb: bool = False,
     wandb_name: str = "",
@@ -166,7 +168,7 @@ def main(
     if pretrained:
         extra_args.extend(["--pretrained", pretrained])
 
-    train.remote(
+    train.spawn(
         config=config,
         extra_args=extra_args,
     )

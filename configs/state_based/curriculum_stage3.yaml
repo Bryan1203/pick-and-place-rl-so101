@@ -32,7 +32,7 @@ env:
   lift_height: 0.08         # 8cm above ground
   hold_steps: 150           # Must hold for 150 steps (~3 seconds at 50Hz)
   reward_type: "dense"
-  reward_version: "v21"
+  reward_version: "v11"     # Original state-based grasp/lift/hold reward
   curriculum_stage: 3       # Gripper near cube, open
   lock_wrist: true          # Lock wrist for stable top-down grasping
 

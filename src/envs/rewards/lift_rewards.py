@@ -10,6 +10,16 @@ For historical/experimental reward versions, see _legacy_rewards.py.
 import numpy as np
 
 
+def reward_sparse_success(env, info: dict, was_grasping: bool = False, action: np.ndarray | None = None) -> float:
+    """Sparse success-only reward for grasp/lift/hold.
+
+    Returns 1 only when the environment reports success. For the lift task,
+    success means the cube is grasped, lifted above ``env.lift_height``, and
+    held there for ``env.hold_steps``. Non-success transitions receive 0.
+    """
+    return 1.0 if info.get("is_success", False) else 0.0
+
+
 def reward_v11(env, info: dict, was_grasping: bool = False, action: np.ndarray | None = None) -> float:
     """V11: Dense reward for state-based training.
 
